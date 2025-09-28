@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Manutenzione Predittiva - Balena</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: #fff;
+        }
+        
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+        }
+        
+        .metric-value {
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .status-running { background-color: #4CAF50; }
+        .status-stopped { background-color: #f44336; }
+        .status-warning { background-color: #ff9800; }
+        .status-error { background-color: #f44336; }
+        
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 20px 0;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+        
+        .btn-primary { background: rgba(76, 175, 80, 0.6); }
+        .btn-danger { background: rgba(244, 67, 54, 0.6); }
+        .btn-warning { background: rgba(255, 152, 0, 0.6); }
+        
+        .alert {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 10px;
+            animation: pulse 2s infinite;
+        }
+        
+        .alert-warning {
+            background: rgba(255, 152, 0, 0.3);
+            border: 1px solid rgba(255, 152, 0, 0.5);
+        }
+        
+        .alert-danger {
+            background: rgba(244, 67, 54, 0.3);
+            border: 1px solid rgba(244, 67, 54, 0.5);
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+        
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        .comparison-table th,
+        .comparison-table td {
+            padding: 10px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .comparison-table th {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Test Manutenzione Predittiva</h1>
+        <p style="text-align: center; opacity: 0.8;">Raspberry Pi su Balena Cloud</p>
+        
+        <div class="controls">
+            <button class="btn btn-primary" onclick="startTest()">▶️ Avvia Test</button>
+            <button class="btn btn-danger" onclick="stopTest()">⏹️ Ferma Test</button>
+            <button class="btn btn-warning" onclick="resetFilter()">🔄 Reset Filtro</button>
+            <button class="btn" onclick="exportData()">📊 Esporta CSV</button>
+        </div>
+        
+        <div id="alerts"></div>
+        
+        <div class="cards-grid">
+            <!-- Status Card -->
+            <div class="card">
+                <h3>📡 Status Sistema</h3>
+                <div class="metric">
+                    <span>Stato Test:</span>
+                    <span id="test-status">
+                        <span class="status-indicator status-stopped"></span>
+                        Disconnesso
+                    </span>
+                </div>
+                <div class="metric">
+                    <span>Punti Dati:</span>
+                    <span class="metric-value" id="data-points">0</span>
+                </div>
+                <div class="metric">
+                    <span>Ultimo Aggiornamento:</span>
+                    <span id="last-update">Mai</span>
+                </div>
+                <div class="metric">
+                    <span>Tempo Test:</span>
+                    <span id="test-duration">00:00:00</span>
+                </div>
+            </div>
+            
+            <!-- Dati Sistema -->
+            <div class="card">
+                <h3>⚙️ Dati Sistema</h3>
+                <div class="metric">
+                    <span>PWM Ventole:</span>
+                    <span class="metric-value" id="pwm">0%</span>
+                </div>
+                <div class="metric">
+                    <span>Pressione:</span>
+                    <span class="metric-value" id="pressure">0 Pa</span>
+                </div>
+                <div class="metric">
+                    <span>Temperatura:</span>
+                    <span class="metric-value" id="temperature">0°C</span>
+                </div>
+                <div class="metric">
+                    <span>PM Value:</span>
+                    <span class="metric-value" id="pm-value">0 μg/m³</span>
+                </div>
+            </div>
+            
+            <!-- Metriche Filtri -->
+            <div class="card">
+                <h3>🔧 Stato Filtri</h3>
+                <div class="metric">
+                    <span>Usura:</span>
+                    <span class="metric-value" id="filter-wear">0%</span>
+                </div>
+                <div class="metric">
+                    <span>Efficienza:</span>
+                    <span class="metric-value" id="filter-efficiency">100%</span>
+                </div>
+                <div class="metric">
+                    <span>Ostruzione:</span>
+                    <span class="metric-value" id="obstruction-index">1.00</span>
+                </div>
+                <div class="metric">
+                    <span>Ore Filtro:</span>
+                    <span class="metric-value" id="filter-hours">0h</span>
+                </div>
+            </div>
+            
+            <!-- Confronto Portate -->
+            <div class="card">
+                <h3>📊 Confronto Portate</h3>
+                <div class="metric">
+                    <span>Calcolata (Algoritmo):</span>
+                    <span class="metric-value" id="flow-calculated">0 m³/h</span>
+                </div>
+                <div class="metric">
+                    <span>Blynk (Sensore):</span>
+                    <span class="metric-value" id="flow-blynk">0 m³/h</span>
+                </div>
+                <div class="metric">
+                    <span>Differenza:</span>
+                    <span class="metric-value" id="flow-difference">0%</span>
+                </div>
+                <div class="metric">
+                    <span>Pressione Pulito:</span>
+                    <span class="metric-value" id="pressure-clean">0 Pa</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Grafici -->
+        <div class="card">
+            <h3>📈 Andamento Temporale</h3>
+            <div class="chart-container">
+                <canvas id="obstructionChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>📉 Confronto Portate</h3>
+            <div class="chart-container">
+                <canvas id="flowChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Tabella Predizioni -->
+        <div class="card">
+            <h3>🔮 Predizioni Manutenzione</h3>
+            <div class="metric">
+                <span>Ore Rimanenti Filtro:</span>
+                <span class="metric-value" id="predicted-hours">∞</span>
+            </div>
+            <div class="metric">
+                <span>Trend Degradazione:</span>
+                <span class="metric-value" id="obstruction-trend">0.00</span>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>🌊 Powered by Balena Cloud | 📱 Dati da Blynk IoT</p>
+            <p>Last Build: <span id="build-time">{{ build_time or 'Unknown' }}</span></p>
+        </div>
+    </div>
+
+    <script>
+        let obstructionChart, flowChart;
+        let updateInterval;
+        
+        // Inizializza grafici
+        function initCharts() {
+            // Grafico ostruzione
+            const ctx1 = document.getElementById('obstructionChart').getContext('2d');
+            obstructionChart = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Indice Ostruzione',
+                        data: [],
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: 'Soglia Warning (1.5)',
+                        data: [],
+                        borderColor: 'rgba(255, 152, 0, 1)',
+                        backgroundColor: 'transparent',
+                        borderDash: [5, 5]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: 'white' } }
+                    },
+                    scales: {
+                        y: { 
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        x: { 
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        }
+                    }
+                }
+            });
+            
+            // Grafico portate
+            const ctx2 = document.getElementById('flowChart').getContext('2d');
+            flowChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Portata Calcolata',
+                        data: [],
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: 'Portata Blynk',
+                        data: [],
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: 'white' } }
+                    },
+                    scales: {
+                        y: { 
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        x: { 
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Aggiorna dati dashboard
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/api/current');
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('Errore API:', data.error);
+                    return;
+                }
+                
+                // Aggiorna status
+                updateStatus(data);
+                
+                // Aggiorna metriche
+                updateMetrics(data);
+                
+                // Aggiorna alerts
+                updateAlerts(data);
+                
+                // Aggiorna grafici
+                updateCharts(data);
+                
+            } catch (error) {
+                console.error('Errore aggiornamento:', error);
+                document.getElementById('test-status').innerHTML = 
+                    '<span class="status-indicator status-error"></span>Errore';
+            }
+        }
+        
+        function updateStatus(data) {
+            const { system_data, test_stats, status } = data;
+            
+            // Status test
+            const statusElement = document.getElementById('test-status');
+            if (status === 'running') {
+                statusElement.innerHTML = '<span class="status-indicator status-running"></span>In Esecuzione';
+            } else {
+                statusElement.innerHTML = '<span class="status-indicator status-stopped"></span>Fermo';
+            }
+            
+            // Statistiche
+            document.getElementById('data-points').textContent = test_stats.data_points || 0;
+            
+            if (test_stats.last_update) {
+                const lastUpdate = new Date(test_stats.last_update);
+                document.getElementById('last-update').textContent = lastUpdate.toLocaleTimeString();
+            }
+            
+            if (test_stats.start_time) {
+                const startTime = new Date(test_stats.start_time);
+                const now = new Date();
+                const duration = Math.floor((now - startTime) / 1000);
+                const hours = Math.floor(duration / 3600);
+                const minutes = Math.floor((duration % 3600) / 60);
+                const seconds = duration % 60;
+                document.getElementById('test-duration').textContent = 
+                    `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+        }
+        
+        function updateMetrics(data) {
+            const { system_data, metrics } = data;
+            
+            // Dati sistema
+            document.getElementById('pwm').textContent = `${system_data.pwm_percentage.toFixed(0)}%`;
+            document.getElementById('pressure').textContent = `${system_data.pressure_measured.toFixed(1)} Pa`;
+            document.getElementById('temperature').textContent = `${system_data.temperature.toFixed(1)}°C`;
+            document.getElementById('pm-value').textContent = `${system_data.pm_value.toFixed(0)} μg/m³`;
+            
+            // Stato filtri
+            document.getElementById('filter-wear').textContent = `${metrics.filter_wear_percent.toFixed(1)}%`;
+            document.getElementById('filter-efficiency').textContent = `${metrics.filter_efficiency.toFixed(1)}%`;
+            document.getElementById('obstruction-index').textContent = metrics.obstruction_index.toFixed(2);
+            document.getElementById('filter-hours').textContent = `${metrics.hours_since_change.toFixed(0)}h`;
+            
+            // Confronto portate
+            document.getElementById('flow-calculated').textContent = `${metrics.flow_calculated.toFixed(0)} m³/h`;
+            document.getElementById('flow-blynk').textContent = `${system_data.flow_blynk.toFixed(0)} m³/h`;
+            document.getElementById('pressure-clean').textContent = `${metrics.pressure_clean.toFixed(1)} Pa`;
+            
+            // Calcola differenza percentuale portate
+            const flowDiff = system_data.flow_blynk > 0 ? 
+                ((Math.abs(metrics.flow_calculated - system_data.flow_blynk) / system_data.flow_blynk) * 100) : 0;
+            document.getElementById('flow-difference').textContent = `${flowDiff.toFixed(1)}%`;
+            
+            // Predizioni
+            const predHours = metrics.predicted_hours_remaining > 900 ? '∞' : `${metrics.predicted_hours_remaining.toFixed(0)}h`;
+            document.getElementById('predicted-hours').textContent = predHours;
+            document.getElementById('obstruction-trend').textContent = metrics.obstruction_trend.toFixed(3);
+        }
+        
+        function updateAlerts(data) {
+            const { metrics } = data;
+            const alertsDiv = document.getElementById('alerts');
+            alertsDiv.innerHTML = '';
+            
+            if (metrics.filter_change_needed) {
+                alertsDiv.innerHTML += `
+                    <div class="alert alert-danger">
+                        🚨 <strong>ALERT:</strong> Cambio filtro necessario! 
+                        Usura: ${metrics.filter_wear_percent.toFixed(1)}% - 
+                        Ore: ${metrics.hours_since_change.toFixed(0)}h
+                    </div>`;
+            }
+            
+            if (metrics.system_anomaly_detected) {
+                alertsDiv.innerHTML += `
+                    <div class="alert alert-warning">
+                        ⚠️ <strong>ANOMALIA:</strong> Sistema fuori parametri normali. 
+                        Verificare sensori e ventole.
+                    </div>`;
+            }
+            
+            if (metrics.predicted_hours_remaining < 48 && metrics.predicted_hours_remaining < 900) {
+                alertsDiv.innerHTML += `
+                    <div class="alert alert-warning">
+                        🔮 <strong>PREDIZIONE:</strong> Cambio filtro raccomandato entro 
+                        ${metrics.predicted_hours_remaining.toFixed(0)} ore
+                    </div>`;
+            }
+        }
+        
+        function updateCharts(data) {
+            const { system_data, metrics } = data;
+            const timestamp = new Date(system_data.timestamp).toLocaleTimeString();
+            
+            // Mantieni solo ultimi 50 punti
+            const maxPoints = 50;
+            
+            // Grafico ostruzione
+            obstructionChart.data.labels.push(timestamp);
+            obstructionChart.data.datasets[0].data.push(metrics.obstruction_index);
+            obstructionChart.data.datasets[1].data.push(1.5); // Soglia warning
+            
+            if (obstructionChart.data.labels.length > maxPoints) {
+                obstructionChart.data.labels.shift();
+                obstructionChart.data.datasets[0].data.shift();
+                obstructionChart.data.datasets[1].data.shift();
+            }
+            obstructionChart.update('none');
+            
+            // Grafico portate
+            flowChart.data.labels.push(timestamp);
+            flowChart.data.datasets[0].data.push(metrics.flow_calculated);
+            flowChart.data.datasets[1].data.push(system_data.flow_blynk);
+            
+            if (flowChart.data.labels.length > maxPoints) {
+                flowChart.data.labels.shift();
+                flowChart.data.datasets[0].data.shift();
+                flowChart.data.datasets[1].data.shift();
+            }
+            flowChart.update('none');
+        }
+        
+        // Funzioni controllo
+        async function startTest() {
+            try {
+                const response = await fetch('/api/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'start' })
+                });
+                const result = await response.json();
+                console.log('Test avviato:', result);
+            } catch (error) {
+                console.error('Errore avvio test:', error);
+            }
+        }
+        
+        async function stopTest() {
+            try {
+                const response = await fetch('/api/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'stop' })
+                });
+                const result = await response.json();
+                console.log('Test fermato:', result);
+            } catch (error) {
+                console.error('Errore stop test:', error);
+            }
+        }
+        
+        async function resetFilter() {
+            if (confirm('Confermi il reset del timer filtro?')) {
+                try {
+                    const response = await fetch('/api/control', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'reset_filter' })
+                    });
+                    const result = await response.json();
+                    console.log('Filtro resettato:', result);
+                } catch (error) {
+                    console.error('Errore reset filtro:', error);
+                }
+            }
+        }
+        
+        async function exportData() {
+            try {
+                window.location.href = '/api/export';
+            } catch (error) {
+                console.error('Errore export:', error);
+            }
+        }
+        
+        // Inizializza app
+        document.addEventListener('DOMContentLoaded', function() {
+            initCharts();
+            updateDashboard();
+            
+            // Aggiorna ogni 5 secondi
+            updateInterval = setInterval(updateDashboard, 5000);
+        });
+        
+        // Cleanup quando la pagina viene chiusa
+        window.addEventListener('beforeunload', function() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+            }
+        });
+    </script>
+</body>
+</html>

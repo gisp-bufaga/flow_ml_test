@@ -1,3 +1,4 @@
+# app.py - Applicazione principale per Balena Cloud
 import os
 import json
 import time
@@ -14,21 +15,31 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configurazione da variabili ambiente Balena
-BLYNK_TOKEN = os.environ.get('BLYNK_TOKEN', 'bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK')  #Dispositivo Milano UV 
+# Configurazione diretta con URL completi (più robusta per Balena)
+BLYNK_TOKEN = os.environ.get('BLYNK_TOKEN', 'bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK')
 BLYNK_SERVER = os.environ.get('BLYNK_SERVER', 'fra1.blynk.cloud')
-SAMPLING_INTERVAL = int(os.environ.get('SAMPLING_INTERVAL', '30'))  # secondi
-TEST_DURATION_HOURS = int(os.environ.get('TEST_DURATION_HOURS', '168'))  # 1 settimana
+SAMPLING_INTERVAL = int(os.environ.get('SAMPLING_INTERVAL', '30'))
+TEST_DURATION_HOURS = int(os.environ.get('TEST_DURATION_HOURS', '168'))
 DEBUG_MODE = os.environ.get('DEBUG_MODE', 'true').lower() == 'true'
 
-# Mappa pin Blynk
-BLYNK_PINS = {
-    'pressure': 'v19',
-    'flow': 'v10', 
-    'pwm': 'v26',
-    'temperature': 'v8',
-    'pm_value': 'v4'
+# Mappa URL completi per bypass problemi variabili ambiente
+BLYNK_URLS = {
+    'pressure': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v19",
+    'flow': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v10",
+    'pwm': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v26",
+    'temperature': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v8",
+    'pm_value': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v4"
 }
+
+# Fallback: se le variabili ambiente sono disponibili, ricostruisci URL dinamicamente
+if BLYNK_TOKEN and BLYNK_TOKEN != 'bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK' and BLYNK_SERVER:
+    BLYNK_URLS = {
+        'pressure': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v19",
+        'flow': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v10",
+        'pwm': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v26",
+        'temperature': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v8",
+        'pm_value': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v4"
+    }
 
 @dataclass
 class SystemData:
@@ -52,40 +63,99 @@ class CalculatedMetrics:
     predicted_hours_remaining: float
     flow_calculated: float  # Flusso calcolato dal nostro algoritmo
 
-class BlynkSimpleClient:
-    """Client Blynk semplificato per singoli stream"""
+class BlynkDirectClient:
+    """Client Blynk con URL diretti per massima affidabilità"""
     
-    def __init__(self, token: str, server: str):
-        self.token = token
-        self.base_url = f"https://{server}/external/api"
+    def __init__(self, url_mapping: dict):
+        self.urls = url_mapping
         self.session = requests.Session()
-        self.session.timeout = 10
+        self.session.timeout = 15
         
-    def get_pin_value(self, pin: str) -> float:
-        """Ottieni valore singolo pin"""
+        # Headers per migliorare compatibilità
+        self.session.headers.update({
+            'User-Agent': 'BalenaIoT-PredictiveMaintenance/1.0',
+            'Accept': 'application/json'
+        })
+        
+        logger.info("Blynk Direct Client inizializzato")
+        for name, url in self.urls.items():
+            # Nascondi token nei log per sicurezza
+            safe_url = url.replace(url.split('token=')[1].split('&')[0], 'TOKEN_HIDDEN')
+            logger.info(f"  {name}: {safe_url}")
+        
+    def get_pin_value(self, pin_name: str) -> float:
+        """Ottieni valore da URL diretto"""
         try:
-            url = f"{self.base_url}/get?token={self.token}&{pin}"
+            if pin_name not in self.urls:
+                logger.error(f"Pin {pin_name} non configurato")
+                return 0.0
+                
+            url = self.urls[pin_name]
+            logger.debug(f"GET: {pin_name}")
+            
             response = self.session.get(url)
             response.raise_for_status()
             
-            # Blynk restituisce lista o valore diretto
+            # Parse risposta Blynk
             data = response.json()
-            if isinstance(data, list):
-                return float(data[0]) if data else 0.0
-            return float(data)
             
+            if isinstance(data, list):
+                value = float(data[0]) if data and len(data) > 0 else 0.0
+            elif isinstance(data, (int, float)):
+                value = float(data)
+            elif isinstance(data, str):
+                try:
+                    value = float(data)
+                except ValueError:
+                    logger.warning(f"Valore non numerico da {pin_name}: {data}")
+                    value = 0.0
+            else:
+                logger.warning(f"Formato risposta sconosciuto da {pin_name}: {type(data)}")
+                value = 0.0
+                
+            logger.debug(f"{pin_name}: {value}")
+            return value
+            
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout lettura {pin_name}")
+            return 0.0
+        except requests.exceptions.ConnectionError:
+            logger.error(f"Errore connessione {pin_name}")
+            return 0.0
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Errore HTTP {pin_name}: {e.response.status_code if e.response else 'unknown'}")
+            return 0.0
+        except (ValueError, TypeError) as e:
+            logger.error(f"Errore parsing {pin_name}: {e}")
+            return 0.0
         except Exception as e:
-            logger.error(f"Errore lettura pin {pin}: {e}")
+            logger.error(f"Errore generico {pin_name}: {e}")
             return 0.0
     
-    def get_multiple_pins(self, pins: dict) -> dict:
-        """Ottieni valori multipli pin in parallelo"""
+    def get_multiple_pins(self, pin_names: list) -> dict:
+        """Ottieni valori multipli pin"""
         results = {}
         
-        for name, pin in pins.items():
-            value = self.get_pin_value(pin)
-            results[name] = value
+        for pin_name in pin_names:
+            value = self.get_pin_value(pin_name)
+            results[pin_name] = value
             
+        return results
+    
+    def test_connectivity(self) -> dict:
+        """Test connettività a tutti i pin"""
+        results = {}
+        
+        logger.info("Test connettività Blynk...")
+        for pin_name in self.urls.keys():
+            try:
+                value = self.get_pin_value(pin_name)
+                results[pin_name] = {'status': 'OK', 'value': value}
+                logger.info(f"  ✓ {pin_name}: {value}")
+            except Exception as e:
+                results[pin_name] = {'status': 'ERROR', 'error': str(e)}
+                logger.error(f"  ✗ {pin_name}: {e}")
+                
         return results
 
 class PredictiveAlgorithm:
@@ -213,12 +283,12 @@ class PredictiveAlgorithm:
         obstruction_trend = recent_avg - older_avg
         
         # Predizioni
-        filter_change_needed = (
+        filter_change_needed = bool(
             obstruction_index >= self.MAX_OBSTRUCTION_CRITICAL or
             self.hours_since_change >= self.FILTER_CHANGE_HOURS
         )
         
-        system_anomaly = (
+        system_anomaly = bool(
             system_data.pressure_measured > 500 or 
             system_data.pressure_measured < 0 or
             obstruction_index > self.MAX_OBSTRUCTION_CRITICAL
@@ -347,8 +417,8 @@ class TestDatabase:
         conn.close()
         return stats
 
-# Istanze globali
-blynk_client = BlynkSimpleClient(BLYNK_TOKEN, BLYNK_SERVER)
+# Istanze globali con client corretto
+blynk_client = BlynkDirectClient(BLYNK_URLS)
 algorithm = PredictiveAlgorithm()
 database = TestDatabase()
 
@@ -369,8 +439,8 @@ def data_collection_loop():
     
     while test_running:
         try:
-            # Ottieni dati da Blynk
-            blynk_data = blynk_client.get_multiple_pins(BLYNK_PINS)
+            # Ottieni dati da Blynk con nuovo client
+            blynk_data = blynk_client.get_multiple_pins(['pressure', 'flow', 'pwm', 'temperature', 'pm_value'])
             
             # Crea oggetto dati sistema
             system_data = SystemData(
@@ -424,30 +494,47 @@ def dashboard():
     """Dashboard principale"""
     return render_template('dashboard.html')
 
+def convert_numpy_types(obj):
+    """Converte tipi numpy in tipi Python nativi per JSON"""
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    return obj
+
 @app.route('/api/current')
 def api_current():
     """API dati attuali"""
     try:
-        # Ottieni dati Blynk
-        blynk_data = blynk_client.get_multiple_pins(BLYNK_PINS)
+        # Ottieni dati Blynk con nuovo client
+        blynk_data = blynk_client.get_multiple_pins(['pressure', 'flow', 'pwm', 'temperature', 'pm_value'])
         
         system_data = SystemData(
             timestamp=datetime.now().isoformat(),
-            pwm_percentage=blynk_data.get('pwm', 0),
-            pressure_measured=blynk_data.get('pressure', 0),
-            flow_blynk=blynk_data.get('flow', 0),
-            temperature=blynk_data.get('temperature', 20),
-            pm_value=blynk_data.get('pm_value', 0)
+            pwm_percentage=float(blynk_data.get('pwm', 0)),
+            pressure_measured=float(blynk_data.get('pressure', 0)),
+            flow_blynk=float(blynk_data.get('flow', 0)),
+            temperature=float(blynk_data.get('temperature', 20)),
+            pm_value=float(blynk_data.get('pm_value', 0))
         )
         
         metrics = algorithm.calculate_metrics(system_data)
         
-        return jsonify({
-            'system_data': asdict(system_data),
-            'metrics': asdict(metrics),
-            'test_stats': test_stats,
+        # Converte tutti i dati in tipi serializzabili
+        response_data = {
+            'system_data': convert_numpy_types(asdict(system_data)),
+            'metrics': convert_numpy_types(asdict(metrics)),
+            'test_stats': convert_numpy_types(test_stats),
             'status': 'running' if test_running else 'stopped'
-        })
+        }
+        
+        return jsonify(response_data)
         
     except Exception as e:
         logger.error(f"Errore API current: {e}")
@@ -530,11 +617,31 @@ def api_export():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # Avvia raccolta dati automaticamente
+    # Log configurazione all'avvio
+    logger.info("=== AVVIO SISTEMA TEST MANUTENZIONE PREDITTIVA ===")
+    logger.info(f"Sampling Interval: {SAMPLING_INTERVAL}s")
+    logger.info(f"Debug Mode: {DEBUG_MODE}")
+    logger.info(f"URL Mapping configurato per {len(BLYNK_URLS)} pin")
+    
+    # Test connettività completo
+    connectivity_results = blynk_client.test_connectivity()
+    
+    # Verifica se almeno pressure e pwm funzionano (minimi per algoritmo)
+    critical_pins = ['pressure', 'pwm']
+    critical_ok = all(connectivity_results.get(pin, {}).get('status') == 'OK' for pin in critical_pins)
+    
+    if critical_ok:
+        logger.info("✓ Pin critici OK - Sistema pronto")
+    else:
+        logger.warning("⚠️  Alcuni pin critici non rispondono - Funzionamento limitato")
+    
+    # Avvia raccolta dati automaticamente se configurato
     if os.environ.get('AUTO_START', 'true').lower() == 'true':
         thread = threading.Thread(target=data_collection_loop, daemon=True)
         thread.start()
+        logger.info("🚀 Raccolta dati avviata automaticamente")
     
     # Avvia server Flask
     port = int(os.environ.get('PORT', 80))
+    logger.info(f"🌐 Avvio server Flask su porta {port}")
     app.run(host='0.0.0.0', port=port, debug=DEBUG_MODE)

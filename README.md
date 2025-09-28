@@ -36,7 +36,7 @@ Nel dashboard Balena, imposta le seguenti variabili:
 | `BLYNK_TOKEN` | `bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK` | Token del tuo progetto Blynk |
 | `BLYNK_SERVER` | `fra1.blynk.cloud` | Server Blynk (fra1, ny3, sgp1) |
 | `SAMPLING_INTERVAL` | `30` | Intervallo campionamento (secondi) |
-| `TEST_DURATION_HOURS` | `168` | Durata test (ore) - 168 = 1 settimana |
+| `TEST_DURATION_HOURS` | `336` | Durata test (ore) - 168 = 1 settimana |
 | `DEBUG_MODE` | `false` | Abilita logging dettagliato |
 | `AUTO_START` | `true` | Avvio automatico raccolta dati |
 

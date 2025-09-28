@@ -14,8 +14,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-
 # Configurazione da variabili ambiente Balena
 BLYNK_TOKEN = os.environ.get('BLYNK_TOKEN', 'bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK')  #Dispositivo Milano UV 
 BLYNK_SERVER = os.environ.get('BLYNK_SERVER', 'fra1.blynk.cloud')
@@ -121,27 +119,44 @@ class PredictiveAlgorithm:
         
     def convert_blynk_pwm_to_real_speed(self, blynk_pwm_percent: float) -> float:
         """
-        Converte la percentuale PWM da Blynk alla velocità reale delle ventole
+        Converte la percentuale PWM da Blynk alla velocità effettiva delle ventole
+        
+        Il sistema funziona così:
+        - PWM Range ESP32: 0-255 (8-bit)
+        - Ventole si avviano a: 64 (25% del range 0-255)
+        - Cap di protezione a: 153 (60% del range 0-255) 
+        - Range operativo effettivo: 64-153 (25%-60% del PWM fisico)
+        - Blynk pubblica: 1-100% che mappa su questo range operativo
         
         Args:
-            blynk_pwm_percent: Percentuale PWM pubblicata su Blynk (1-100%)
+            blynk_pwm_percent: Percentuale da Blynk (0-100%)
             
         Returns:
-            Percentuale velocità reale delle ventole per scalare le curve
+            Percentuale velocità per scalare le curve caratteristiche
         """
         if blynk_pwm_percent == 0:
             return 0.0
             
-        # Converte da percentuale Blynk (1-100%) a duty cycle PWM (64-153)
+        # Converte da percentuale Blynk (1-100%) a duty cycle PWM fisico (64-153)
         duty_cycle = self.map_value(blynk_pwm_percent, 1, 100, self.MIN_FAN_SPEED_PWM, self.MAX_FAN_SPEED_PWM)
         
-        # Converte duty cycle a percentuale velocità reale (25-60% del PWM fisico)
-        real_pwm_percent = self.map_value(duty_cycle, self.MIN_FAN_SPEED_PWM, self.MAX_FAN_SPEED_PWM, 25, 60)
+        # Calcola la percentuale del PWM fisico ESP32 (0-255 range)
+        physical_pwm_percent = (duty_cycle / 255.0) * 100.0  # Es: 153/255 = 60%
         
-        # Per le curve delle ventole, normalizza su 100% (dove 60% PWM = 100% velocità)
-        fan_speed_percent = self.map_value(real_pwm_percent, 25, 60, 25, 100)
+        # Per le curve caratteristiche delle ventole:
+        # - Il punto di avvio (25%) corrisponde al minimo delle curve
+        # - Il cap attuale (60%) corrisponde al massimo configurato, NON al 100% delle ventole
+        # - Quindi usiamo il mapping 25%-60% → 0%-100% delle curve caratteristiche
         
-        return fan_speed_percent
+        # Normalizza dal range operativo (25%-60%) al range curve (0%-100%)
+        if physical_pwm_percent <= 25.0:
+            curve_scale_percent = 0.0  # Sotto il minimo operativo
+        else:
+            # Scala linearmente da 25%-60% fisico a 0%-100% curve
+            curve_scale_percent = self.map_value(physical_pwm_percent, 25.0, 60.0, 0.0, 100.0)
+            curve_scale_percent = max(0.0, min(100.0, curve_scale_percent))
+        
+        return curve_scale_percent
         
     def map_value(self, x: float, in_min: float, in_max: float, out_min: float, out_max: float) -> float:
         """Equivalente della funzione map() di Arduino"""
@@ -158,8 +173,11 @@ class PredictiveAlgorithm:
     def calculate_metrics(self, system_data: SystemData) -> CalculatedMetrics:
         """Calcola metriche principali"""
         
-        # Scala curva ventole per PWM
-        scale_factor = system_data.pwm_percentage / 100.0
+        # Converte PWM Blynk a velocità reale ventole
+        real_fan_speed = self.convert_blynk_pwm_to_real_speed(system_data.pwm_percentage)
+        
+        # Scala curva ventole per velocità reale
+        scale_factor = real_fan_speed / 100.0
         q_fan_scaled = self.fan_flow_total * scale_factor
         p_fan_scaled = self.fan_pressure * scale_factor * scale_factor
         
@@ -383,7 +401,11 @@ def data_collection_loop():
                 logger.error(f"ANOMALY: Anomalia sistema - Ostruzione: {metrics.obstruction_index:.2f}")
             
             if DEBUG_MODE:
-                logger.info(f"PWM: {system_data.pwm_percentage:.0f}% | "
+                real_speed = algorithm.convert_blynk_pwm_to_real_speed(system_data.pwm_percentage)
+                physical_pwm = ((algorithm.map_value(system_data.pwm_percentage, 1, 100, 64, 153) / 255.0) * 100) if system_data.pwm_percentage > 0 else 0
+                logger.info(f"PWM_Blynk: {system_data.pwm_percentage:.0f}% | "
+                           f"PWM_Physical: {physical_pwm:.1f}% | " 
+                           f"Curve_Scale: {real_speed:.1f}% | "
                            f"P: {system_data.pressure_measured:.1f}Pa | "
                            f"Q_calc: {metrics.flow_calculated:.0f}m³/h | "
                            f"Q_blynk: {system_data.flow_blynk:.0f}m³/h | "

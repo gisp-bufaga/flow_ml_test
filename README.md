@@ -86,30 +86,6 @@ Il sistema fa chiamate dirette agli endpoint:
 - `https://fra1.blynk.cloud/external/api/get?token=<TOKEN>&v10` (Portata)
 - `https://fra1.blynk.cloud/external/api/get?token=<TOKEN>&v1` (PWM)
 
-## 🎯 Vantaggi Balena
-
-### Gestione Remota
-- **Deploy OTA**: Aggiornamenti senza accesso fisico
-- **SSH/Terminal**: Accesso remoto completo
-- **Logs Real-time**: Monitoring da dashboard
-- **Health Check**: Status dispositivo automatico
-
-### Scaling
-- **Multi-device**: Stesso codice su più Raspberry
-- **Fleet Management**: Gestione centralizzata
-- **A/B Testing**: Deploy graduale aggiornamenti
-
-### Monitoraggio
-- **Metriche Sistema**: CPU, RAM, storage, temperatura
-- **Network**: Connettività, traffico dati
-- **Application**: Logs applicazione, restart automatici
-
-## 📱 Accesso Mobile
-Il dashboard è responsive e accessibile da:
-- **Web Browser**: Qualsiasi dispositivo
-- **Balena Cloud**: Dashboard integrata  
-- **VPN**: Accesso sicuro da remoto
-
 ## 🔄 Workflow Tipico
 
 1. **Deploy**: Push codice su Balena
@@ -118,9 +94,3 @@ Il dashboard è responsive e accessibile da:
 4. **Test**: Lascia girare per durata desiderata
 5. **Analysis**: Export dati e genera report
 6. **Iterate**: Modifica algoritmo e re-deploy
-
-## 🛡️ Sicurezza
-- Tutti i dati restano nel dispositivo locale
-- Accesso dashboard tramite autenticazione Balena
-- Token Blynk configurabili come secrets
-- Comunicazioni HTTPS

@@ -33,7 +33,7 @@ Nel dashboard Balena, imposta le seguenti variabili:
 
 | Variabile | Valore | Descrizione |
 |-----------|--------|-------------|
-| `BLYNK_TOKEN` | `3NAD9pyFu_uK1cZOFzpgfV1FqTHU_3RQ` | Token del tuo progetto Blynk |
+| `BLYNK_TOKEN` | `bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK` | Token del tuo progetto Blynk |
 | `BLYNK_SERVER` | `fra1.blynk.cloud` | Server Blynk (fra1, ny3, sgp1) |
 | `SAMPLING_INTERVAL` | `30` | Intervallo campionamento (secondi) |
 | `TEST_DURATION_HOURS` | `168` | Durata test (ore) - 168 = 1 settimana |
@@ -72,11 +72,11 @@ Nel dashboard Balena, imposta le seguenti variabili:
 ### Pin Mapping
 ```python
 BLYNK_PINS = {
-    'pressure': 'v19',  # Pressione differenziale [Pa]
-    'flow': 'v10',      # Portata sensore [m³/h]  
-    'pwm': 'v1',        # PWM ventole [%]
-    'temperature': 'v5', # Temperatura [°C]
-    'pm_value': 'v6'    # Particolato [μg/m³]
+    'pressure': 'v19',
+    'flow': 'v10', 
+    'pwm': 'v26',
+    'temperature': 'v8',
+    'pm_value': 'v4'
 }
 ```
 

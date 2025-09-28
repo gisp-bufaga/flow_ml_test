@@ -1,0 +1,23 @@
+
+version: '2'
+
+services:
+  web:
+    build: .
+    ports:
+      - "80:80"
+    environment:
+      - BLYNK_TOKEN
+      - BLYNK_SERVER
+      - SAMPLING_INTERVAL
+      - TEST_DURATION_HOURS
+      - DEBUG_MODE
+      - AUTO_START
+    volumes:
+      - 'data:/data'
+    labels:
+      io.balena.features.supervisor-api: '1'
+      io.balena.features.balena-api: '1'
+    
+volumes:
+  data:

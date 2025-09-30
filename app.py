@@ -1,4 +1,3 @@
-# app.py - Applicazione principale per Balena Cloud
 import os
 import json
 import time
@@ -16,23 +15,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configurazione diretta con URL completi (più robusta per Balena)
-BLYNK_TOKEN = os.environ.get('BLYNK_TOKEN', 'bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK')
+BLYNK_TOKEN = os.environ.get('BLYNK_TOKEN', '_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73') # portello
 BLYNK_SERVER = os.environ.get('BLYNK_SERVER', 'fra1.blynk.cloud')
 SAMPLING_INTERVAL = int(os.environ.get('SAMPLING_INTERVAL', '30'))
-TEST_DURATION_HOURS = int(os.environ.get('TEST_DURATION_HOURS', '168'))
+TEST_DURATION_HOURS = int(os.environ.get('TEST_DURATION_HOURS', '336')) # 2 settimane
 DEBUG_MODE = os.environ.get('DEBUG_MODE', 'true').lower() == 'true'
 
 # Mappa URL completi per bypass problemi variabili ambiente
 BLYNK_URLS = {
-    'pressure': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v19",
-    'flow': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v10",
-    'pwm': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v26",
-    'temperature': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v8",
-    'pm_value': f"https://fra1.blynk.cloud/external/api/get?token=bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK&v4"
+    'pressure': f"https://fra1.blynk.cloud/external/api/get?token=_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73&v19",
+    'flow': f"https://fra1.blynk.cloud/external/api/get?token=_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73&v10",
+    'pwm': f"https://fra1.blynk.cloud/external/api/get?token=_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73&v26",
+    'temperature': f"https://fra1.blynk.cloud/external/api/get?token=_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73&v8",
+    'pm_value': f"https://fra1.blynk.cloud/external/api/get?token=_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73&v4"
 }
 
 # Fallback: se le variabili ambiente sono disponibili, ricostruisci URL dinamicamente
-if BLYNK_TOKEN and BLYNK_TOKEN != 'bNr-NaQgxRioKbUXWiYDsQ1J6P2MR-gK' and BLYNK_SERVER:
+if BLYNK_TOKEN and BLYNK_TOKEN != '_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73&v19' and BLYNK_SERVER:
     BLYNK_URLS = {
         'pressure': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v19",
         'flow': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v10",
@@ -167,8 +166,8 @@ class PredictiveAlgorithm:
         self.fan_pressure = np.array([450, 320, 240, 180, 120, 70, 20])
         
         # Curve filtri
-        self.filter_flow = np.array([275, 1305, 2179, 3029, 4118, 5160, 5711, 6177, 6872])  # *4 filtri
-        self.filter_pressure = np.array([2.25, 13.25, 22.75, 34.25, 51.25, 68.5, 79.0, 88.25, 101.75])
+        self.filter_flow = np.array([0, 850, 1700, 2125.4, 2550, 3400, 4250, 5100, 5950, 6375])  # *4 filtri
+        self.filter_pressure = np.array([28, 32, 38, 42, 47, 56, 66, 78, 92, 100])
         
         # Sistema (2 ventole)
         self.fan_flow_total = self.fan_flow * 2

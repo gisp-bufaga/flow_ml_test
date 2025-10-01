@@ -336,36 +336,67 @@
                 }
             });
             
-            // Grafico portate
+            // Grafico portate - CONFIGURAZIONE MIGLIORATA
             const ctx2 = document.getElementById('flowChart').getContext('2d');
             flowChart = new Chart(ctx2, {
                 type: 'line',
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Portata Calcolata',
+                        label: 'Portata Calcolata (Algoritmo)',
                         data: [],
                         borderColor: 'rgba(54, 162, 235, 1)',
                         backgroundColor: 'rgba(54, 162, 235, 0.1)',
-                        tension: 0.4
+                        tension: 0.4,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointHoverRadius: 4
                     }, {
-                        label: 'Portata Blynk',
+                        label: 'Portata Blynk (Sensore)',
                         data: [],
                         borderColor: 'rgba(75, 192, 192, 1)',
                         backgroundColor: 'rgba(75, 192, 192, 0.1)',
-                        tension: 0.4
+                        tension: 0.4,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointHoverRadius: 4
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
                     plugins: {
-                        legend: { labels: { color: 'white' } }
+                        legend: { 
+                            labels: { color: 'white' },
+                            display: true
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += Math.round(context.parsed.y) + ' m³/h';
+                                    return label;
+                                }
+                            }
+                        }
                     },
                     scales: {
                         y: { 
                             ticks: { color: 'white' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            title: {
+                                display: true,
+                                text: 'Portata (m³/h)',
+                                color: 'white'
+                            },
+                            beginAtZero: false
                         },
                         x: { 
                             ticks: { color: 'white' },
@@ -452,14 +483,21 @@
             document.getElementById('obstruction-index').textContent = metrics.obstruction_index.toFixed(2);
             document.getElementById('filter-hours').textContent = `${metrics.hours_since_change.toFixed(0)}h`;
             
-            // Confronto portate
-            document.getElementById('flow-calculated').textContent = `${metrics.flow_calculated.toFixed(0)} m³/h`;
-            document.getElementById('flow-blynk').textContent = `${system_data.flow_blynk.toFixed(0)} m³/h`;
+            // CONFRONTO PORTATE - FIX: usa flow_comparison se disponibile
+            const flowCalculated = data.flow_comparison ? 
+                data.flow_comparison.flow_calculated : metrics.flow_calculated;
+            const flowBlynk = data.flow_comparison ? 
+                data.flow_comparison.flow_from_blynk : system_data.flow_blynk;
+            
+            document.getElementById('flow-calculated').textContent = `${flowCalculated.toFixed(0)} m³/h`;
+            document.getElementById('flow-blynk').textContent = `${flowBlynk.toFixed(0)} m³/h`;
             document.getElementById('pressure-clean').textContent = `${metrics.pressure_clean.toFixed(1)} Pa`;
             
-            // Calcola differenza percentuale portate
-            const flowDiff = system_data.flow_blynk > 0 ? 
-                ((Math.abs(metrics.flow_calculated - system_data.flow_blynk) / system_data.flow_blynk) * 100) : 0;
+            // Calcola differenza percentuale - FIX: usa valori corretti
+            const flowDiff = data.flow_comparison ? 
+                data.flow_comparison.difference_percent : 
+                (flowBlynk > 0 ? ((Math.abs(flowCalculated - flowBlynk) / flowBlynk) * 100) : 0);
+            
             document.getElementById('flow-difference').textContent = `${flowDiff.toFixed(1)}%`;
             
             // Predizioni
@@ -497,6 +535,16 @@
                         ${metrics.predicted_hours_remaining.toFixed(0)} ore
                     </div>`;
             }
+            
+            // NUOVO ALERT: Differenza portate eccessiva
+            if (data.flow_comparison && data.flow_comparison.difference_percent > 15) {
+                alertsDiv.innerHTML += `
+                    <div class="alert alert-warning">
+                        📊 <strong>DISCREPANZA PORTATE:</strong> 
+                        Differenza tra calcolo e sensore: ${data.flow_comparison.difference_percent.toFixed(1)}%
+                        (${data.flow_comparison.difference.toFixed(0)} m³/h)
+                    </div>`;
+            }
         }
         
         function updateCharts(data) {
@@ -518,17 +566,52 @@
             }
             obstructionChart.update('none');
             
-            // Grafico portate
+            // GRAFICO PORTATE - FIX CRITICO
+            // Usa valori dalla sezione flow_comparison se disponibile
+            const flowCalculated = data.flow_comparison ? 
+                data.flow_comparison.flow_calculated : metrics.flow_calculated;
+            const flowBlynk = data.flow_comparison ? 
+                data.flow_comparison.flow_from_blynk : system_data.flow_blynk;
+            
             flowChart.data.labels.push(timestamp);
-            flowChart.data.datasets[0].data.push(metrics.flow_calculated);
-            flowChart.data.datasets[1].data.push(system_data.flow_blynk);
+            
+            // IMPORTANTE: Assicurati che entrambi i dataset vengano aggiornati SEMPRE
+            flowChart.data.datasets[0].data.push(flowCalculated);  // Dataset 0: Calcolata
+            flowChart.data.datasets[1].data.push(flowBlynk);       // Dataset 1: Blynk
             
             if (flowChart.data.labels.length > maxPoints) {
                 flowChart.data.labels.shift();
                 flowChart.data.datasets[0].data.shift();
                 flowChart.data.datasets[1].data.shift();
             }
+            
+            // AGGIORNA SCALA Y DINAMICAMENTE per vedere meglio le differenze
+            const allFlowValues = [
+                ...flowChart.data.datasets[0].data, 
+                ...flowChart.data.datasets[1].data
+            ];
+            
+            if (allFlowValues.length > 0) {
+                const minFlow = Math.min(...allFlowValues.filter(v => v > 0));
+                const maxFlow = Math.max(...allFlowValues);
+                
+                // Aggiungi margine 10% sopra e sotto
+                flowChart.options.scales.y.min = Math.max(0, minFlow * 0.9);
+                flowChart.options.scales.y.max = maxFlow * 1.1;
+            }
+            
             flowChart.update('none');
+            
+            // DEBUG: Log per verificare i valori
+            console.log('Flow Update:', {
+                calculated: flowCalculated,
+                blynk: flowBlynk,
+                timestamp: timestamp,
+                datasets: {
+                    calc_length: flowChart.data.datasets[0].data.length,
+                    blynk_length: flowChart.data.datasets[1].data.length
+                }
+            });
         }
         
         // Funzioni controllo

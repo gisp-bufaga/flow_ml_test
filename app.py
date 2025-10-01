@@ -15,10 +15,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configurazione diretta con URL completi (più robusta per Balena)
-BLYNK_TOKEN = os.environ.get('BLYNK_TOKEN', '_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73') # portello
+BLYNK_TOKEN = os.environ.get('BLYNK_TOKEN', '_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73')  # portello
 BLYNK_SERVER = os.environ.get('BLYNK_SERVER', 'fra1.blynk.cloud')
 SAMPLING_INTERVAL = int(os.environ.get('SAMPLING_INTERVAL', '30'))
-TEST_DURATION_HOURS = int(os.environ.get('TEST_DURATION_HOURS', '336')) # 2 settimane
+TEST_DURATION_HOURS = int(os.environ.get('TEST_DURATION_HOURS', '336'))  # 2 settimane
 DEBUG_MODE = os.environ.get('DEBUG_MODE', 'true').lower() == 'true'
 
 # Mappa URL completi per bypass problemi variabili ambiente
@@ -40,6 +40,7 @@ if BLYNK_TOKEN and BLYNK_TOKEN != '_PtiUhnhKwhtkmhsVz8G76bWCw3Uzs73&v19' and BLY
         'pm_value': f"https://{BLYNK_SERVER}/external/api/get?token={BLYNK_TOKEN}&v4"
     }
 
+
 @dataclass
 class SystemData:
     timestamp: str
@@ -48,6 +49,7 @@ class SystemData:
     flow_blynk: float  # Flusso da Blynk per confronto
     temperature: float
     pm_value: float
+
 
 @dataclass
 class CalculatedMetrics:
@@ -62,42 +64,43 @@ class CalculatedMetrics:
     predicted_hours_remaining: float
     flow_calculated: float  # Flusso calcolato dal nostro algoritmo
 
+
 class BlynkDirectClient:
     """Client Blynk con URL diretti per massima affidabilità"""
-    
+
     def __init__(self, url_mapping: dict):
         self.urls = url_mapping
         self.session = requests.Session()
         self.session.timeout = 15
-        
+
         # Headers per migliorare compatibilità
         self.session.headers.update({
             'User-Agent': 'BalenaIoT-PredictiveMaintenance/1.0',
             'Accept': 'application/json'
         })
-        
+
         logger.info("Blynk Direct Client inizializzato")
         for name, url in self.urls.items():
             # Nascondi token nei log per sicurezza
             safe_url = url.replace(url.split('token=')[1].split('&')[0], 'TOKEN_HIDDEN')
             logger.info(f"  {name}: {safe_url}")
-        
+
     def get_pin_value(self, pin_name: str) -> float:
         """Ottieni valore da URL diretto"""
         try:
             if pin_name not in self.urls:
                 logger.error(f"Pin {pin_name} non configurato")
                 return 0.0
-                
+
             url = self.urls[pin_name]
             logger.debug(f"GET: {pin_name}")
-            
+
             response = self.session.get(url)
             response.raise_for_status()
-            
+
             # Parse risposta Blynk
             data = response.json()
-            
+
             if isinstance(data, list):
                 value = float(data[0]) if data and len(data) > 0 else 0.0
             elif isinstance(data, (int, float)):
@@ -111,10 +114,10 @@ class BlynkDirectClient:
             else:
                 logger.warning(f"Formato risposta sconosciuto da {pin_name}: {type(data)}")
                 value = 0.0
-                
+
             logger.debug(f"{pin_name}: {value}")
             return value
-            
+
         except requests.exceptions.Timeout:
             logger.error(f"Timeout lettura {pin_name}")
             return 0.0
@@ -130,21 +133,21 @@ class BlynkDirectClient:
         except Exception as e:
             logger.error(f"Errore generico {pin_name}: {e}")
             return 0.0
-    
+
     def get_multiple_pins(self, pin_names: list) -> dict:
         """Ottieni valori multipli pin"""
         results = {}
-        
+
         for pin_name in pin_names:
             value = self.get_pin_value(pin_name)
             results[pin_name] = value
-            
+
         return results
-    
+
     def test_connectivity(self) -> dict:
         """Test connettività a tutti i pin"""
         results = {}
-        
+
         logger.info("Test connettività Blynk...")
         for pin_name in self.urls.keys():
             try:
@@ -154,69 +157,70 @@ class BlynkDirectClient:
             except Exception as e:
                 results[pin_name] = {'status': 'ERROR', 'error': str(e)}
                 logger.error(f"  ✗ {pin_name}: {e}")
-                
+
         return results
+
 
 class PredictiveAlgorithm:
     """Algoritmo manutenzione predittiva ottimizzato"""
-    
+
     def __init__(self):
         # Curve ventole semplificate (punti chiave)
         self.fan_flow = np.array([0, 500, 1000, 1500, 2000, 2500, 2950])
         self.fan_pressure = np.array([450, 320, 240, 180, 120, 70, 20])
-        
+
         # Curve filtri
         self.filter_flow = np.array([0, 850, 1700, 2125.4, 2550, 3400, 4250, 5100, 5950, 6375])  # *4 filtri
         self.filter_pressure = np.array([28, 32, 38, 42, 47, 56, 66, 78, 92, 100])
-        
+
         # Sistema (2 ventole)
         self.fan_flow_total = self.fan_flow * 2
-        
+
         # Parametri PWM ESP32 (corrispondenti al tuo codice)
-        self.MIN_FAN_SPEED_PWM = 64   # 25% PWM fisico
-        self.MAX_FAN_SPEED_PWM = 153  # 60% PWM fisico  
-        
+        self.MIN_FAN_SPEED_PWM = 64  # 25% PWM fisico
+        self.MAX_FAN_SPEED_PWM = 153  # 60% PWM fisico
+
         # Parametri
         self.MAX_OBSTRUCTION_WARNING = 1.5
         self.MAX_OBSTRUCTION_CRITICAL = 2.0
         self.FILTER_CHANGE_HOURS = 2000
-        
+
         # Stato interno
         self.hours_since_change = 0
         self.obstruction_history = [1.0] * 10
         self.history_index = 0
-        
+
     def convert_blynk_pwm_to_real_speed(self, blynk_pwm_percent: float) -> float:
         """
         Converte la percentuale PWM da Blynk alla velocità effettiva delle ventole
-        
+
         Il sistema funziona così:
         - PWM Range ESP32: 0-255 (8-bit)
         - Ventole si avviano a: 64 (25% del range 0-255)
-        - Cap di protezione a: 153 (60% del range 0-255) 
+        - Cap di protezione a: 153 (60% del range 0-255)
         - Range operativo effettivo: 64-153 (25%-60% del PWM fisico)
         - Blynk pubblica: 1-100% che mappa su questo range operativo
-        
+
         Args:
             blynk_pwm_percent: Percentuale da Blynk (0-100%)
-            
+
         Returns:
             Percentuale velocità per scalare le curve caratteristiche
         """
         if blynk_pwm_percent == 0:
             return 0.0
-            
+
         # Converte da percentuale Blynk (1-100%) a duty cycle PWM fisico (64-153)
         duty_cycle = self.map_value(blynk_pwm_percent, 1, 100, self.MIN_FAN_SPEED_PWM, self.MAX_FAN_SPEED_PWM)
-        
+
         # Calcola la percentuale del PWM fisico ESP32 (0-255 range)
         physical_pwm_percent = (duty_cycle / 255.0) * 100.0  # Es: 153/255 = 60%
-        
+
         # Per le curve caratteristiche delle ventole:
         # - Il punto di avvio (25%) corrisponde al minimo delle curve
         # - Il cap attuale (60%) corrisponde al massimo configurato, NON al 100% delle ventole
         # - Quindi usiamo il mapping 25%-60% → 0%-100% delle curve caratteristiche
-        
+
         # Normalizza dal range operativo (25%-60%) al range curve (0%-100%)
         if physical_pwm_percent <= 25.0:
             curve_scale_percent = 0.0  # Sotto il minimo operativo
@@ -224,13 +228,13 @@ class PredictiveAlgorithm:
             # Scala linearmente da 25%-60% fisico a 0%-100% curve
             curve_scale_percent = self.map_value(physical_pwm_percent, 25.0, 60.0, 0.0, 100.0)
             curve_scale_percent = max(0.0, min(100.0, curve_scale_percent))
-        
+
         return curve_scale_percent
-        
+
     def map_value(self, x: float, in_min: float, in_max: float, out_min: float, out_max: float) -> float:
         """Equivalente della funzione map() di Arduino"""
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
-        
+
     def interpolate(self, x: float, x_arr: np.ndarray, y_arr: np.ndarray) -> float:
         """Interpolazione lineare veloce"""
         if x <= x_arr[0]:
@@ -238,68 +242,68 @@ class PredictiveAlgorithm:
         if x >= x_arr[-1]:
             return max(0.0, y_arr[-1])
         return max(0.0, np.interp(x, x_arr, y_arr))
-    
+
     def calculate_metrics(self, system_data: SystemData) -> CalculatedMetrics:
         """Calcola metriche principali"""
-        
+
         # Converte PWM Blynk a velocità reale ventole
         real_fan_speed = self.convert_blynk_pwm_to_real_speed(system_data.pwm_percentage)
-        
+
         # Scala curva ventole per velocità reale
         scale_factor = real_fan_speed / 100.0
         q_fan_scaled = self.fan_flow_total * scale_factor
         p_fan_scaled = self.fan_pressure * scale_factor * scale_factor
-        
+
         # Calcola portata dalla pressione
         flow_calculated = self.interpolate(
-            system_data.pressure_measured, 
-            p_fan_scaled, 
+            system_data.pressure_measured,
+            p_fan_scaled,
             q_fan_scaled
         )
-        
+
         # Pressione filtro pulito teorica
         pressure_clean = self.interpolate(
             flow_calculated,
             self.filter_flow,
             self.filter_pressure
         )
-        
+
         # Indice ostruzione
         obstruction_index = 1.0
         if pressure_clean > 0.1:
             obstruction_index = system_data.pressure_measured / pressure_clean
-            
+
         # Metriche derivate
         filter_wear = max(0.0, min(100.0, (obstruction_index - 1.0) * 100.0))
         filter_efficiency = max(0.0, min(100.0, (2.0 - obstruction_index) * 100.0))
-        
+
         # Trend ostruzione
         self.obstruction_history[self.history_index] = obstruction_index
         self.history_index = (self.history_index + 1) % 10
-        
+
         recent_avg = sum(self.obstruction_history[:5]) / 5.0
         older_avg = sum(self.obstruction_history[5:]) / 5.0
         obstruction_trend = recent_avg - older_avg
-        
+
         # Predizioni
         filter_change_needed = bool(
             obstruction_index >= self.MAX_OBSTRUCTION_CRITICAL or
             self.hours_since_change >= self.FILTER_CHANGE_HOURS
         )
-        
+
         system_anomaly = bool(
-            system_data.pressure_measured > 500 or 
+            system_data.pressure_measured > 500 or
             system_data.pressure_measured < 0 or
             obstruction_index > self.MAX_OBSTRUCTION_CRITICAL
         )
-        
+
         # Ore rimanenti stimate
         if filter_wear > 0 and self.hours_since_change > 10:
             degradation_rate = filter_wear / self.hours_since_change
             predicted_hours = (100.0 - filter_wear) / degradation_rate if degradation_rate > 0 else 999
         else:
             predicted_hours = 999
-            
+
         return CalculatedMetrics(
             pressure_clean=pressure_clean,
             obstruction_index=obstruction_index,
@@ -313,15 +317,16 @@ class PredictiveAlgorithm:
             flow_calculated=flow_calculated
         )
 
+
 class TestDatabase:
     """Database SQLite ottimizzato per Balena"""
-    
+
     def __init__(self, db_path: str = "/data/test_data.db"):
         self.db_path = db_path
         # Crea directory se non esiste
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.init_database()
-        
+
     def init_database(self):
         """Inizializza database"""
         conn = sqlite3.connect(self.db_path)
@@ -346,7 +351,7 @@ class TestDatabase:
                 predicted_hours_remaining REAL
             )
         ''')
-        
+
         conn.execute('''
             CREATE TABLE IF NOT EXISTS system_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -356,10 +361,10 @@ class TestDatabase:
                 severity TEXT
             )
         ''')
-        
+
         conn.commit()
         conn.close()
-        
+
     def save_data_point(self, system_data: SystemData, metrics: CalculatedMetrics):
         """Salva singolo punto dati"""
         conn = sqlite3.connect(self.db_path)
@@ -380,23 +385,23 @@ class TestDatabase:
         ))
         conn.commit()
         conn.close()
-        
+
     def get_recent_data(self, hours: int = 24) -> list:
         """Ottieni dati recenti per dashboard"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        
+
         cursor = conn.execute('''
             SELECT * FROM test_data 
             WHERE datetime(timestamp) > datetime('now', '-{} hours')
             ORDER BY timestamp DESC
             LIMIT 1000
         '''.format(hours))
-        
+
         data = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return data
-    
+
     def get_statistics(self) -> dict:
         """Statistiche generali"""
         conn = sqlite3.connect(self.db_path)
@@ -411,10 +416,11 @@ class TestDatabase:
                 MAX(timestamp) as end_time
             FROM test_data
         ''')
-        
+
         stats = dict(cursor.fetchone())
         conn.close()
         return stats
+
 
 # Istanze globali con client corretto
 blynk_client = BlynkDirectClient(BLYNK_URLS)
@@ -428,19 +434,20 @@ app = Flask(__name__)
 test_running = False
 test_stats = {"start_time": None, "data_points": 0, "last_update": None}
 
+
 def data_collection_loop():
     """Loop principale raccolta dati"""
     global test_running, test_stats
-    
+
     logger.info("Avvio raccolta dati...")
     test_running = True
     test_stats["start_time"] = datetime.now().isoformat()
-    
+
     while test_running:
         try:
             # Ottieni dati da Blynk con nuovo client
             blynk_data = blynk_client.get_multiple_pins(['pressure', 'flow', 'pwm', 'temperature', 'pm_value'])
-            
+
             # Crea oggetto dati sistema
             system_data = SystemData(
                 timestamp=datetime.now().isoformat(),
@@ -450,48 +457,58 @@ def data_collection_loop():
                 temperature=blynk_data.get('temperature', 20),
                 pm_value=blynk_data.get('pm_value', 0)
             )
-            
+
             # Calcola metriche
             metrics = algorithm.calculate_metrics(system_data)
-            
+
             # Salva in database
             database.save_data_point(system_data, metrics)
-            
+
             # Aggiorna statistiche
             test_stats["data_points"] += 1
             test_stats["last_update"] = datetime.now().isoformat()
             algorithm.hours_since_change += SAMPLING_INTERVAL / 3600
-            
+
             # Log eventi importanti
             if metrics.filter_change_needed:
                 logger.warning(f"ALERT: Cambio filtro necessario - Usura: {metrics.filter_wear_percent:.1f}%")
-                
+
             if metrics.system_anomaly_detected:
                 logger.error(f"ANOMALY: Anomalia sistema - Ostruzione: {metrics.obstruction_index:.2f}")
-            
+
             if DEBUG_MODE:
                 real_speed = algorithm.convert_blynk_pwm_to_real_speed(system_data.pwm_percentage)
-                physical_pwm = ((algorithm.map_value(system_data.pwm_percentage, 1, 100, 64, 153) / 255.0) * 100) if system_data.pwm_percentage > 0 else 0
+                physical_pwm = ((algorithm.map_value(system_data.pwm_percentage, 1, 100, 64,
+                                                     153) / 255.0) * 100) if system_data.pwm_percentage > 0 else 0
+
+                # CONFRONTO CHIARO tra i due flow
+                flow_diff = abs(metrics.flow_calculated - system_data.flow_blynk)
+                flow_diff_pct = (
+                            flow_diff / max(system_data.flow_blynk, 0.1) * 100) if system_data.flow_blynk > 0.1 else 0
+
                 logger.info(f"PWM_Blynk: {system_data.pwm_percentage:.0f}% | "
-                           f"PWM_Physical: {physical_pwm:.1f}% | " 
-                           f"Curve_Scale: {real_speed:.1f}% | "
-                           f"P: {system_data.pressure_measured:.1f}Pa | "
-                           f"Q_calc: {metrics.flow_calculated:.0f}m³/h | "
-                           f"Q_blynk: {system_data.flow_blynk:.0f}m³/h | "
-                           f"Wear: {metrics.filter_wear_percent:.1f}%")
-            
+                            f"PWM_Physical: {physical_pwm:.1f}% | "
+                            f"Curve_Scale: {real_speed:.1f}% | "
+                            f"P: {system_data.pressure_measured:.1f}Pa | "
+                            f"Q_calc: {metrics.flow_calculated:.0f}m³/h | "
+                            f"Q_blynk: {system_data.flow_blynk:.0f}m³/h | "
+                            f"ΔQ: {flow_diff:.0f}m³/h ({flow_diff_pct:.1f}%) | "
+                            f"Wear: {metrics.filter_wear_percent:.1f}%")
+
         except Exception as e:
             logger.error(f"Errore raccolta dati: {e}")
-        
+
         time.sleep(SAMPLING_INTERVAL)
-    
+
     logger.info("Raccolta dati terminata")
+
 
 # Routes Flask per dashboard web
 @app.route('/')
 def dashboard():
     """Dashboard principale"""
     return render_template('dashboard.html')
+
 
 def convert_numpy_types(obj):
     """Converte tipi numpy in tipi Python nativi per JSON"""
@@ -507,13 +524,14 @@ def convert_numpy_types(obj):
         return [convert_numpy_types(item) for item in obj]
     return obj
 
+
 @app.route('/api/current')
 def api_current():
-    """API dati attuali"""
+    """API dati attuali con unificazione flow data"""
     try:
-        # Ottieni dati Blynk con nuovo client
+        # Ottieni dati Blynk
         blynk_data = blynk_client.get_multiple_pins(['pressure', 'flow', 'pwm', 'temperature', 'pm_value'])
-        
+
         system_data = SystemData(
             timestamp=datetime.now().isoformat(),
             pwm_percentage=float(blynk_data.get('pwm', 0)),
@@ -522,22 +540,38 @@ def api_current():
             temperature=float(blynk_data.get('temperature', 20)),
             pm_value=float(blynk_data.get('pm_value', 0))
         )
-        
+
         metrics = algorithm.calculate_metrics(system_data)
-        
-        # Converte tutti i dati in tipi serializzabili
+
+        # Converti tutti i dati
+        system_dict = convert_numpy_types(asdict(system_data))
+        metrics_dict = convert_numpy_types(asdict(metrics))
+
+        # SOLUZIONE: Crea un oggetto unificato con entrambi i flow facilmente accessibili
         response_data = {
-            'system_data': convert_numpy_types(asdict(system_data)),
-            'metrics': convert_numpy_types(asdict(metrics)),
+            'timestamp': system_dict['timestamp'],
+            'system_data': system_dict,
+            'metrics': metrics_dict,
             'test_stats': convert_numpy_types(test_stats),
-            'status': 'running' if test_running else 'stopped'
+            'status': 'running' if test_running else 'stopped',
+
+            # Aggiungi sezione dedicata per confronto flussi
+            'flow_comparison': {
+                'flow_from_blynk': system_dict['flow_blynk'],
+                'flow_calculated': metrics_dict['flow_calculated'],
+                'difference': abs(system_dict['flow_blynk'] - metrics_dict['flow_calculated']),
+                'difference_percent': (abs(system_dict['flow_blynk'] - metrics_dict['flow_calculated']) /
+                                       max(system_dict['flow_blynk'], 0.1) * 100) if system_dict[
+                                                                                         'flow_blynk'] > 0.1 else 0
+            }
         }
-        
+
         return jsonify(response_data)
-        
+
     except Exception as e:
         logger.error(f"Errore API current: {e}")
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/history/<int:hours>')
 def api_history(hours):
@@ -548,6 +582,7 @@ def api_history(hours):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/api/statistics')
 def api_statistics():
     """API statistiche"""
@@ -557,30 +592,78 @@ def api_statistics():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/flow_analysis')
+def api_flow_analysis():
+    """Analisi dettagliata confronto flow_blynk vs flow_calculated"""
+    try:
+        # Prendi ultimi 100 punti
+        data = database.get_recent_data(hours=24)
+
+        if not data:
+            return jsonify({'error': 'No data available'}), 404
+
+        # Calcola statistiche confronto
+        differences = []
+        for point in data:
+            if point['flow_blynk'] > 0:
+                diff = abs(point['flow_calculated'] - point['flow_blynk'])
+                diff_pct = (diff / point['flow_blynk']) * 100
+                differences.append({
+                    'timestamp': point['timestamp'],
+                    'flow_blynk': point['flow_blynk'],
+                    'flow_calculated': point['flow_calculated'],
+                    'absolute_diff': diff,
+                    'percent_diff': diff_pct
+                })
+
+        if differences:
+            avg_diff = sum(d['absolute_diff'] for d in differences) / len(differences)
+            max_diff = max(d['absolute_diff'] for d in differences)
+            avg_pct = sum(d['percent_diff'] for d in differences) / len(differences)
+        else:
+            avg_diff = max_diff = avg_pct = 0
+
+        return jsonify({
+            'summary': {
+                'total_points': len(differences),
+                'average_difference': avg_diff,
+                'max_difference': max_diff,
+                'average_percent_difference': avg_pct
+            },
+            'details': differences[-50:]  # Ultimi 50 per non sovraccaricare
+        })
+
+    except Exception as e:
+        logger.error(f"Errore flow analysis: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/control', methods=['POST'])
 def api_control():
     """Controllo test"""
     global test_running
-    
+
     action = request.json.get('action')
-    
+
     if action == 'start' and not test_running:
         # Avvia thread raccolta dati
         thread = threading.Thread(target=data_collection_loop, daemon=True)
         thread.start()
         return jsonify({'status': 'started'})
-        
+
     elif action == 'stop':
         test_running = False
         return jsonify({'status': 'stopped'})
-        
+
     elif action == 'reset_filter':
         algorithm.hours_since_change = 0
         algorithm.obstruction_history = [1.0] * 10
         logger.info("Timer filtro resettato")
         return jsonify({'status': 'filter_reset'})
-        
+
     return jsonify({'error': 'Invalid action'}), 400
+
 
 @app.route('/api/export')
 def api_export():
@@ -588,32 +671,34 @@ def api_export():
     try:
         import io
         from flask import make_response
-        
+
         data = database.get_recent_data(24 * 7)  # 1 settimana
-        
+
         if not data:
             return jsonify({'error': 'No data available'}), 404
-            
+
         # Crea CSV
         output = io.StringIO()
         if data:
             # Header
             headers = list(data[0].keys())
             output.write(','.join(headers) + '\n')
-            
-            # Data rows  
+
+            # Data rows
             for row in data:
                 values = [str(row[h]) for h in headers]
                 output.write(','.join(values) + '\n')
-        
+
         response = make_response(output.getvalue())
         response.headers['Content-Type'] = 'text/csv'
-        response.headers['Content-Disposition'] = f'attachment; filename=test_data_{datetime.now().strftime("%Y%m%d")}.csv'
-        
+        response.headers[
+            'Content-Disposition'] = f'attachment; filename=test_data_{datetime.now().strftime("%Y%m%d")}.csv'
+
         return response
-        
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     # Log configurazione all'avvio
@@ -621,25 +706,25 @@ if __name__ == '__main__':
     logger.info(f"Sampling Interval: {SAMPLING_INTERVAL}s")
     logger.info(f"Debug Mode: {DEBUG_MODE}")
     logger.info(f"URL Mapping configurato per {len(BLYNK_URLS)} pin")
-    
+
     # Test connettività completo
     connectivity_results = blynk_client.test_connectivity()
-    
+
     # Verifica se almeno pressure e pwm funzionano (minimi per algoritmo)
     critical_pins = ['pressure', 'pwm']
     critical_ok = all(connectivity_results.get(pin, {}).get('status') == 'OK' for pin in critical_pins)
-    
+
     if critical_ok:
         logger.info("✓ Pin critici OK - Sistema pronto")
     else:
         logger.warning("⚠️  Alcuni pin critici non rispondono - Funzionamento limitato")
-    
+
     # Avvia raccolta dati automaticamente se configurato
     if os.environ.get('AUTO_START', 'true').lower() == 'true':
         thread = threading.Thread(target=data_collection_loop, daemon=True)
         thread.start()
         logger.info("🚀 Raccolta dati avviata automaticamente")
-    
+
     # Avvia server Flask
     port = int(os.environ.get('PORT', 80))
     logger.info(f"🌐 Avvio server Flask su porta {port}")

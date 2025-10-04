@@ -1,0 +1,197 @@
+# SOLUZIONE 1: Offset pressione per perdite fisse
+# Aggiungi questa costante nella classe PredictiveAlgorithm
+
+class PredictiveAlgorithm:
+    def __init__(self):
+        # ... codice esistente ...
+        
+        # NUOVO: Offset pressione per perdite di carico fisse (griglia, prefiltro, tenuta)
+        # Questo valore va calibrato empiricamente
+        self.PRESSURE_OFFSET = 25.0  # Pa - perdite fisse del sistema
+        
+        # ALTERNATIVA: Usa calibrazione empirica basata su dati reali
+        self.USE_EMPIRICAL_CURVES = True
+        
+        # Curve empiriche costruite dai tuoi dati reali
+        # [PWM%, Pressione_misurata_Pa, Flow_reale_m3h]
+        self.empirical_data = np.array([
+            # Questi sono esempi - SOSTITUISCI con i tuoi dati reali raccolti
+            [20, 10, 800],
+            [30, 15, 1200],
+            [45, 22, 1850],
+            [60, 35, 2400],
+            [80, 55, 2800],
+            [100, 80, 3000]
+        ])
+        
+    def calculate_metrics(self, system_data: SystemData) -> CalculatedMetrics:
+        """Calcola metriche principali"""
+        
+        if self.USE_EMPIRICAL_CURVES:
+            # Usa calibrazione empirica basata sui dati reali
+            flow_calculated = self.calculate_flow_empirical(
+                system_data.pwm_percentage,
+                system_data.pressure_measured
+            )
+        else:
+            # Metodo originale con offset pressione
+            real_fan_speed = self.convert_blynk_pwm_to_real_speed(system_data.pwm_percentage)
+            
+            scale_factor = real_fan_speed / 100.0
+            q_fan_scaled = self.fan_flow_total * scale_factor
+            p_fan_scaled = self.fan_pressure * scale_factor * scale_factor
+            
+            # APPLICA OFFSET: aggiungi le perdite fisse alla pressione misurata
+            # per ottenere la pressione "teorica" sulle ventole
+            pressure_corrected = system_data.pressure_measured + self.PRESSURE_OFFSET
+            
+            flow_calculated = self.interpolate(
+                pressure_corrected,  # Usa pressione corretta
+                p_fan_scaled, 
+                q_fan_scaled
+            )
+        
+        # Resto del codice invariato...
+        
+        # Per pressure_clean, usa sempre la curva filtri originale
+        pressure_clean = self.interpolate(
+            flow_calculated,
+            self.filter_flow,
+            self.filter_pressure
+        )
+        
+        # ... resto del codice ...
+        
+    def calculate_flow_empirical(self, pwm_percent: float, pressure_measured: float) -> float:
+        """
+        Calcola portata usando dati empirici del sistema reale
+        
+        Usa regressione multivariata sui dati raccolti:
+        Flow = f(PWM, Pressure)
+        """
+        
+        if len(self.empirical_data) < 3:
+            logger.warning("Dati empirici insufficienti, uso metodo teorico")
+            return 0.0
+        
+        # Estrai colonne
+        pwm_data = self.empirical_data[:, 0]
+        pressure_data = self.empirical_data[:, 1]
+        flow_data = self.empirical_data[:, 2]
+        
+        # Metodo semplice: interpolazione 2D lineare pesata
+        # Trova i 3 punti empirici più vicini
+        distances = np.sqrt(
+            ((pwm_data - pwm_percent) / 50.0) ** 2 +  # Normalizza PWM
+            ((pressure_data - pressure_measured) / 30.0) ** 2  # Normalizza pressione
+        )
+        
+        # Prendi i 3 punti più vicini
+        closest_indices = np.argsort(distances)[:3]
+        
+        # Calcola pesi inversamente proporzionali alla distanza
+        weights = 1.0 / (distances[closest_indices] + 0.1)  # +0.1 per evitare div/0
+        weights = weights / np.sum(weights)  # Normalizza
+        
+        # Media pesata dei flow corrispondenti
+        flow_estimated = np.sum(flow_data[closest_indices] * weights)
+        
+        logger.debug(f"Flow empirico: PWM={pwm_percent:.1f}%, P={pressure_measured:.1f}Pa -> Q={flow_estimated:.0f}m³/h")
+        
+        return flow_estimated
+
+
+# SOLUZIONE 2: Script di calibrazione automatica
+# Aggiungi questo endpoint Flask per raccogliere dati di calibrazione
+
+@app.route('/api/calibration/add_point', methods=['POST'])
+def api_calibration_add():
+    """Aggiungi punto di calibrazione manuale"""
+    try:
+        data = request.json
+        pwm = float(data['pwm'])
+        pressure = float(data['pressure'])
+        flow = float(data['flow'])
+        
+        # Aggiungi a file CSV di calibrazione
+        with open('/data/calibration_points.csv', 'a') as f:
+            f.write(f"{datetime.now().isoformat()},{pwm},{pressure},{flow}\n")
+        
+        return jsonify({'status': 'added', 'point': [pwm, pressure, flow]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/calibration/points')
+def api_calibration_points():
+    """Ottieni tutti i punti di calibrazione"""
+    try:
+        import pandas as pd
+        df = pd.read_csv('/data/calibration_points.csv', 
+                        names=['timestamp', 'pwm', 'pressure', 'flow'])
+        
+        # Raggruppa per PWM simili e fai media
+        df['pwm_bin'] = (df['pwm'] / 5).round() * 5  # Raggruppa ogni 5%
+        
+        calibration = df.groupby('pwm_bin').agg({
+            'pwm': 'mean',
+            'pressure': 'mean',
+            'flow': 'mean'
+        }).reset_index(drop=True)
+        
+        return jsonify(calibration.to_dict('records'))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/calibration/apply')
+def api_calibration_apply():
+    """Applica calibrazione da punti raccolti"""
+    try:
+        import pandas as pd
+        df = pd.read_csv('/data/calibration_points.csv',
+                        names=['timestamp', 'pwm', 'pressure', 'flow'])
+        
+        # Crea array per algoritmo
+        df['pwm_bin'] = (df['pwm'] / 5).round() * 5
+        calibration = df.groupby('pwm_bin').agg({
+            'pwm': 'mean',
+            'pressure': 'mean', 
+            'flow': 'mean'
+        }).reset_index(drop=True)
+        
+        # Aggiorna algoritmo
+        algorithm.empirical_data = calibration[['pwm', 'pressure', 'flow']].values
+        algorithm.USE_EMPIRICAL_CURVES = True
+        
+        logger.info(f"Calibrazione applicata con {len(calibration)} punti")
+        
+        return jsonify({
+            'status': 'calibrated',
+            'points': len(calibration),
+            'data': calibration.to_dict('records')
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# SOLUZIONE 3: Procedura di calibrazione guidata
+# Aggiungi nel dashboard un bottone per calibrazione
+
+"""
+PROCEDURA DI CALIBRAZIONE:
+
+1. Assicurati che i filtri siano PULITI
+2. Avvia questa sequenza dal dashboard:
+   - PWM 20% -> attendi 30s -> registra (PWM, P, Flow)
+   - PWM 30% -> attendi 30s -> registra
+   - PWM 45% -> attendi 30s -> registra
+   - PWM 60% -> attendi 30s -> registra
+   - PWM 80% -> attendi 30s -> registra
+   - PWM 100% -> attendi 30s -> registra
+
+3. Chiama /api/calibration/apply per usare i dati raccolti
+
+4. L'algoritmo ora userà le curve empiriche del TUO sistema reale,
+   che includono automaticamente tutte le perdite (griglia, prefiltro, tenuta)
+
+IMPORTANTE: Ripeti ogni 6-12 mesi o dopo manutenzioni significative
+"""
